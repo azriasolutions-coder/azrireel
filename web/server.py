@@ -61,9 +61,14 @@ def _render_worker() -> None:
                 JOBS[job_id]["started_at"] = time.time()
                 JOBS[job_id].pop("queue_position", None)
         job_dir = params.pop("_job_dir", None)
+        is_concat = params.pop("_is_concat", False)
         try:
             output_path = params["output"]
-            _, transitions_used = generate(**params)
+            if is_concat:
+                concat_videos(**params)
+                transitions_used: list[str] = []
+            else:
+                _, transitions_used = generate(**params)
             with JOBS_LOCK:
                 if job_id in JOBS:
                     JOBS[job_id].update({
@@ -116,11 +121,14 @@ from core.generator import (  # noqa: E402
     DEFAULT_ASPECT,
     DEFAULT_MOTION,
     MEDIA_EXTS,
+    NATIVE_XFADE_TRANSITIONS,
     SCENE_DURATION,
     SCENE_LOOKS,
     SCENE_MOTIONS,
     TRANSITION_DURATION,
+    VIDEO_EXTS,
     check_ffmpeg,
+    concat_videos,
     generate,
     list_music,
 )
@@ -332,6 +340,64 @@ def api_job(job_id: str):
         if not job:
             return jsonify({"ok": False, "error": "job not found"}), 404
         return jsonify({"ok": True, **job})
+
+
+@app.post("/api/concat")
+def api_concat():
+    """Concatenate 2+ uploaded videos with an xfade transition between each pair."""
+    purge_stale_outputs(OUTPUT_DIR)
+    files = request.files.getlist("videos")
+    if len(files) < 2:
+        return jsonify({"error": "at least 2 videos required"}), 400
+
+    transition = (request.form.get("transition") or "fade").strip()
+    try:
+        xfade_dur = float(request.form.get("xfade") or 1.0)
+    except ValueError:
+        xfade_dur = 1.0
+
+    job_id = uuid.uuid4().hex[:10]
+    job_dir = WORKDIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    video_paths: list[Path] = []
+    for idx, f in enumerate(files):
+        if not f.filename:
+            continue
+        suffix = Path(f.filename).suffix.lower()
+        if suffix not in VIDEO_EXTS:
+            continue
+        target = job_dir / f"{idx:04d}{suffix}"
+        f.save(target)
+        video_paths.append(target)
+
+    if len(video_paths) < 2:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return jsonify({"error": "need at least 2 valid video files"}), 400
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_name = f"concat_{int(time.time())}_{job_id}.mp4"
+    output_path = OUTPUT_DIR / output_name
+
+    # Enqueue in the render queue (serialized, no concurrent OOM).
+    new_job_id = uuid.uuid4().hex[:12]
+    params = {
+        "videos": video_paths,
+        "output": output_path,
+        "transition": transition,
+        "xfade_dur": xfade_dur,
+        "_job_dir": job_dir,
+        "_is_concat": True,
+    }
+    with JOBS_LOCK:
+        JOBS[new_job_id] = {
+            "status": "queued",
+            "queue_position": RENDER_QUEUE.qsize() + 1,
+            "created_at": time.time(),
+            "images": len(video_paths),
+        }
+    RENDER_QUEUE.put((new_job_id, params))
+    return jsonify({"ok": True, "job_id": new_job_id})
 
 
 @app.get("/api/video/<name>")

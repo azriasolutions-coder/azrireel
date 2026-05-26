@@ -212,6 +212,45 @@
       <a id="download" class="btn primary" download>הורד MP4</a>
     </section>
 
+    <section class="card">
+      <h2>🎬 חיבור סרטונים (Concat)</h2>
+      <p class="hint">העלה 2 סרטונים או יותר → יתחברו עם מעבר חלק ביניהם. כל סרטון ישמור את האורך המקורי שלו.</p>
+      <div class="drop-zone" id="concat-drop" style="padding:24px 14px;">
+        <div class="drop-inner">
+          <strong>גרור סרטונים לכאן</strong>
+          <span>או</span>
+          <label class="btn small"><input type="file" id="concat-input" accept="video/*" multiple hidden /> בחר סרטונים</label>
+        </div>
+      </div>
+      <ul id="concat-list" class="thumb-list" style="margin:8px 0;"></ul>
+      <div class="grid grid-2" style="margin-top:10px;">
+        <label>
+          <span>סגנון מעבר</span>
+          <select id="concat-transition">
+            <option value="fade">מעבר חלק (Crossfade)</option>
+            <option value="slideleft">החלקה שמאלה</option>
+            <option value="slideright">החלקה ימינה</option>
+            <option value="wipeleft">ניגוב שמאלה</option>
+            <option value="circleopen">פתיחת מעגל</option>
+            <option value="radial">סיבוב רדיאלי</option>
+            <option value="fadeblack">החשכה</option>
+            <option value="fadewhite">הבהוב לבן</option>
+          </select>
+        </label>
+        <label>
+          <span>אורך מעבר (שניות)</span>
+          <input type="number" id="concat-xfade" value="1.0" min="0.1" max="5" step="0.1" />
+        </label>
+      </div>
+      <button id="concat-generate" class="btn primary big" style="margin-top:12px;" disabled>✦ חבר סרטונים ✦</button>
+      <div id="concat-status" class="status"></div>
+      <section id="concat-result" class="card" hidden style="margin-top:12px;padding:14px;">
+        <h2>הסרטון המחובר מוכן</h2>
+        <video id="concat-video" controls playsinline style="width:100%;max-height:60vh;border-radius:10px;background:#000;margin-bottom:10px;"></video>
+        <a id="concat-download" class="btn primary" download>הורד MP4</a>
+      </section>
+    </section>
+
     <footer class="brand-footer">
       <div class="brand-divider"></div>
       <div class="brand-content">

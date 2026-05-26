@@ -693,6 +693,88 @@ def generate(
     return output, transitions
 
 
+def get_duration(path: Path) -> float:
+    """Probe a media file's duration in seconds via ffprobe."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True,
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def concat_videos(
+    videos: list[Path],
+    output: Path,
+    transition: str = "fade",
+    xfade_dur: float = 1.0,
+) -> Path:
+    """Concatenate multiple video files with xfade transitions between them.
+
+    Audio is cross-faded with matching duration. Returns the output path.
+    """
+    if not videos:
+        raise ValueError("No videos provided")
+    for p in videos:
+        if not p.exists():
+            raise FileNotFoundError(p)
+    if len(videos) == 1:
+        shutil.copy2(videos[0], output)
+        return output
+
+    durations = [get_duration(v) for v in videos]
+    xfade_dur = min(xfade_dur, min(durations) - 0.1)
+    xfade_dur = max(0.1, xfade_dur)
+
+    cmd: list[str] = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    for v in videos:
+        cmd += ["-i", str(v)]
+
+    # Build video xfade chain.
+    vparts: list[str] = []
+    prev_label = "0:v"
+    cursor = durations[0] - xfade_dur
+    for i in range(1, len(videos)):
+        out = f"vx{i}"
+        t = transition if transition in NATIVE_XFADE_TRANSITIONS else "fade"
+        vparts.append(
+            f"[{prev_label}][{i}:v]xfade=transition={t}:"
+            f"duration={xfade_dur:.3f}:offset={cursor:.3f}[{out}]"
+        )
+        prev_label = out
+        cursor += durations[i] - xfade_dur
+
+    # Build audio crossfade chain.
+    apart: list[str] = []
+    prev_alabel = "0:a"
+    for i in range(1, len(videos)):
+        out = f"ax{i}"
+        apart.append(
+            f"[{prev_alabel}][{i}:a]acrossfade=d={xfade_dur:.3f}[{out}]"
+        )
+        prev_alabel = out
+
+    graph = ";".join(vparts + apart)
+    cmd += [
+        "-filter_complex", graph,
+        "-map", f"[{prev_label}]",
+        "-map", f"[{prev_alabel}]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError("ffmpeg concat failed:\n" + (proc.stderr or "")[:1500])
+    return output
+
+
 def check_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found in PATH")

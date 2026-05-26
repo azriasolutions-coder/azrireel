@@ -701,3 +701,99 @@ generateBtn.addEventListener("click", async () => {
 loadTransitionList();
 loadMusicList();
 render();
+
+// ────────────────────────────────────────────────────────────
+// Video Concat section
+// ────────────────────────────────────────────────────────────
+const concatDrop = document.getElementById("concat-drop");
+const concatInput = document.getElementById("concat-input");
+const concatList = document.getElementById("concat-list");
+const concatTransition = document.getElementById("concat-transition");
+const concatXfade = document.getElementById("concat-xfade");
+const concatGenerateBtn = document.getElementById("concat-generate");
+const concatStatus = document.getElementById("concat-status");
+const concatResult = document.getElementById("concat-result");
+const concatVideo = document.getElementById("concat-video");
+const concatDownload = document.getElementById("concat-download");
+
+let concatFiles = []; // {id, file, url}
+
+function renderConcatList() {
+  concatList.innerHTML = "";
+  concatFiles.forEach((item, idx) => {
+    const li = document.createElement("li");
+    li.className = "thumb";
+    li.style.aspectRatio = "16/9";
+    li.innerHTML = `
+      <video src="${item.url}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;pointer-events:none;"></video>
+      <span class="idx">${idx + 1}</span>
+      <button class="remove" data-id="${item.id}" title="הסר">×</button>
+    `;
+    concatList.appendChild(li);
+  });
+  if (concatGenerateBtn) concatGenerateBtn.disabled = concatFiles.length < 2;
+}
+
+function addConcatFiles(fileList) {
+  for (const f of Array.from(fileList)) {
+    if (!f.type.startsWith("video/")) continue;
+    concatFiles.push({ id: uid(), file: f, url: URL.createObjectURL(f) });
+  }
+  renderConcatList();
+}
+
+if (concatDrop) {
+  concatDrop.addEventListener("dragover", (e) => { e.preventDefault(); concatDrop.classList.add("over"); });
+  concatDrop.addEventListener("dragleave", () => concatDrop.classList.remove("over"));
+  concatDrop.addEventListener("drop", (e) => { e.preventDefault(); concatDrop.classList.remove("over"); addConcatFiles(e.dataTransfer.files); });
+}
+if (concatInput) concatInput.addEventListener("change", (e) => addConcatFiles(e.target.files));
+if (concatList) concatList.addEventListener("click", (e) => {
+  const btn = e.target.closest(".remove");
+  if (!btn) return;
+  const idx = concatFiles.findIndex((f) => f.id === btn.dataset.id);
+  if (idx >= 0) { URL.revokeObjectURL(concatFiles[idx].url); concatFiles.splice(idx, 1); renderConcatList(); }
+});
+
+if (concatGenerateBtn) concatGenerateBtn.addEventListener("click", async () => {
+  if (concatFiles.length < 2) return;
+  concatGenerateBtn.disabled = true;
+  concatStatus.classList.remove("error");
+  concatStatus.textContent = "מעלה סרטונים…";
+  if (concatResult) concatResult.hidden = true;
+
+  const fd = new FormData();
+  for (const item of concatFiles) fd.append("videos", item.file, item.file.name);
+  fd.append("transition", concatTransition ? concatTransition.value : "fade");
+  fd.append("xfade", concatXfade ? concatXfade.value : "1.0");
+
+  try {
+    const r = await fetch("/api/concat", { method: "POST", body: fd });
+    const sub = await r.json();
+    if (!r.ok || !sub.ok || !sub.job_id) throw new Error(sub.error || "שגיאה בשליחה");
+    const jobId = sub.job_id;
+    concatStatus.textContent = `מעבד… (${jobId.slice(0,6)})`;
+
+    while (true) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const sr = await fetch(`/api/job/${jobId}`);
+      const s = await sr.json();
+      if (s.status === "queued") { concatStatus.textContent = `בתור — מקום ${s.queue_position || "?"}`; }
+      else if (s.status === "rendering") {
+        const sec = s.started_at ? Math.round(Date.now()/1000 - s.started_at) : 0;
+        concatStatus.textContent = `מחבר… ${sec} שניות`;
+      } else if (s.status === "done") {
+        concatStatus.textContent = "הסתיים ✓";
+        if (concatVideo) concatVideo.src = s.video_url + "?t=" + Date.now();
+        if (concatDownload) { concatDownload.href = s.video_url; concatDownload.setAttribute("download", s.video_filename || "concat.mp4"); }
+        if (concatResult) { concatResult.hidden = false; concatResult.scrollIntoView({ behavior: "smooth" }); }
+        break;
+      } else if (s.status === "failed") { throw new Error(s.error || "חיבור נכשל"); }
+    }
+  } catch (err) {
+    concatStatus.textContent = "נכשל: " + err.message;
+    concatStatus.classList.add("error");
+  } finally {
+    concatGenerateBtn.disabled = false;
+  }
+});
